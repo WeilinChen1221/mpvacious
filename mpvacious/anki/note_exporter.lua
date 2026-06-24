@@ -325,6 +325,74 @@ local function make_exporter()
         end
     end
 
+    local function subtitle_from_history_record(record)
+        return {
+            text = record.sentence,
+            secondary = record.secondary or '',
+            start = tonumber(record.start_time),
+            ['end'] = tonumber(record.end_time),
+            snapshot_time = tonumber(record.snapshot_time),
+            source_path = record.video_path,
+        }
+    end
+
+    local function update_note_from_history_record(note_id, record, on_finish)
+        maybe_reload_config()
+        local sub = subtitle_from_history_record(record)
+        if h.is_empty(sub.source_path) then
+            if on_finish then
+                on_finish(false, "history record has no video path")
+            end
+            return
+        end
+
+        local anki_media_dir = self.ankiconnect.get_media_dir_path()
+        if h.is_empty(anki_media_dir) then
+            if on_finish then
+                on_finish(false, "couldn't find Anki media directory")
+            end
+            return
+        end
+
+        self.encoder.set_output_dir(anki_media_dir)
+        self.forvo.set_output_dir(anki_media_dir)
+
+        local snapshot = self.encoder.snapshot.create_job(sub)
+        local audio = self.encoder.audio.create_job(sub, audio_padding())
+        local new_data = construct_note_fields(sub.text, sub.secondary, snapshot.filename, audio.filename)
+        local remaining = 2
+        local media_ok = true
+
+        local function media_finished(success)
+            if success == false then
+                media_ok = false
+            end
+            remaining = remaining - 1
+            if remaining > 0 then
+                return
+            end
+            if media_ok == false then
+                if on_finish then
+                    on_finish(false, "media creation failed")
+                end
+                return
+            end
+            self.ankiconnect.append_media(
+                    note_id,
+                    make_new_note_data(self.ankiconnect.get_note_fields(note_id), h.deep_copy(new_data), { overwrite = false }),
+                    substitute_fmt(self.config.note_tag),
+                    function(error)
+                        if on_finish then
+                            on_finish(h.is_empty(error), error)
+                        end
+                    end
+            )
+        end
+
+        snapshot.on_finish(media_finished).run_async()
+        audio.on_finish(media_finished).run_async()
+    end
+
     local function export_to_anki(gui)
         maybe_reload_config()
         local sub = self.subs_observer.collect_from_current()
@@ -466,6 +534,7 @@ local function make_exporter()
         init = init,
         update_notes = update_notes,
         export_to_anki = export_to_anki,
+        update_note_from_history_record = update_note_from_history_record,
         maybe_reload_config = maybe_reload_config,
         join_fields = join_fields,
         update_last_note = update_last_note,
