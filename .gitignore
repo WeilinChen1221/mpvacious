@@ -6,3 +6,8 @@
 *TODO*
 
 .github/RELEASE/*.conf
+.venv/
+*.db
+*.sqlite
+*.sqlite3
+mpvacious/history_server/.pytest_cache/
