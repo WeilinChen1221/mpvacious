@@ -33,6 +33,7 @@ class HistoryStore:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS records (
+                    sequence INTEGER NOT NULL,
                     id TEXT PRIMARY KEY,
                     sentence TEXT NOT NULL,
                     normalized_sentence TEXT NOT NULL,
@@ -51,10 +52,24 @@ class HistoryStore:
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(records)").fetchall()
+            }
+            if "sequence" not in columns:
+                conn.execute("ALTER TABLE records ADD COLUMN sequence INTEGER")
+                conn.execute("UPDATE records SET sequence = rowid WHERE sequence IS NULL")
             conn.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_records_pending_match
-                ON records (normalized_sentence, created_at DESC, id DESC)
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_records_sequence
+                ON records (sequence)
+                """
+            )
+            conn.execute("DROP INDEX IF EXISTS idx_records_pending_match")
+            conn.execute(
+                """
+                CREATE INDEX idx_records_pending_match
+                ON records (normalized_sentence, created_at DESC, sequence DESC)
                 WHERE status = 'pending_note'
                 """
             )
@@ -79,9 +94,14 @@ class HistoryStore:
             "updated_at": now,
         }
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            values["sequence"] = conn.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM records"
+            ).fetchone()[0]
             conn.execute(
                 """
                 INSERT INTO records (
+                    sequence,
                     id,
                     sentence,
                     normalized_sentence,
@@ -99,6 +119,7 @@ class HistoryStore:
                     updated_at
                 )
                 VALUES (
+                    :sequence,
                     :id,
                     :sentence,
                     :normalized_sentence,
@@ -132,7 +153,7 @@ class HistoryStore:
             rows = conn.execute(
                 """
                 SELECT * FROM records
-                ORDER BY created_at DESC, id DESC
+                ORDER BY created_at DESC, sequence DESC
                 LIMIT ?
                 """,
                 (limit,),
@@ -150,7 +171,7 @@ class HistoryStore:
                 WHERE normalized_sentence = ?
                     AND status = 'pending_note'
                     AND created_at >= ?
-                ORDER BY created_at DESC, id DESC
+                ORDER BY created_at DESC, sequence DESC
                 LIMIT 1
                 """,
                 (normalized_sentence, cutoff),

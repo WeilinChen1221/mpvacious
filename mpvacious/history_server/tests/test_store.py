@@ -46,6 +46,22 @@ def test_newest_unmatched_duplicate_wins(tmp_path: Path) -> None:
     assert match["id"] == "new"
 
 
+def test_insertion_order_breaks_created_at_ties(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("history_server.store.time.time", lambda: 1000.0)
+    store = HistoryStore(tmp_path / "history.sqlite3")
+    store.add_record(make_record("z-old"))
+    store.add_record(make_record("a-new"))
+
+    records = store.list_records()
+    assert [record["id"] for record in records] == ["a-new", "z-old"]
+
+    match = store.find_pending_by_normalized_sentence("これはペンです。", window_minutes=120)
+    assert match is not None
+    assert match["id"] == "a-new"
+
+
 def test_status_update_and_retry(tmp_path: Path) -> None:
     store = HistoryStore(tmp_path / "history.sqlite3")
     store.add_record(make_record())
