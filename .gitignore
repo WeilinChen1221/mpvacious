@@ -1,5 +1,6 @@
 .idea
 .vscode
+.worktrees
 *.zip
 *.html
 *TODO*
