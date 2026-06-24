@@ -53,6 +53,7 @@ local subs_observer = require('subtitles.observer')
 local codec_support = require('encoder.codec_support')
 local make_new_note_checker = require('anki.new_note_checker')
 local make_note_exporter = require('anki.note_exporter')
+local history_normalizer = require('history.normalizer')
 local Subtitle = require('subtitles.subtitle')
 local make_release_checker = require('utils.release_checker')
 
@@ -564,6 +565,7 @@ end
 local function run_tests()
     h.run_tests()
     note_exporter.run_tests()
+    history_normalizer.run_tests()
 end
 
 local function pcall_tests()
