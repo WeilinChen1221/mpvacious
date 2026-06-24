@@ -10,6 +10,7 @@ and automatically add media (audio and images) to them if they match your config
 local mp = require('mp')
 local msg = require('mp.msg')
 local h = require('helpers')
+local normalizer = require('history.normalizer')
 
 local function make_anki_new_note_checker()
     -- Once every X seconds, check if there's a new note.
@@ -65,6 +66,30 @@ local function make_anki_new_note_checker()
         return h.is_empty(note_fields[self.config.audio_field]) and h.is_empty(note_fields[self.config.image_field])
     end
 
+    local function try_update_from_history(note_id, note_fields)
+        if h.is_empty(self.history_controller) or not self.history_controller.enabled() then
+            return false
+        end
+        local sentence = note_fields[self.config.sentence_field]
+        if h.is_empty(sentence) then
+            return false
+        end
+        local normalized = normalizer.normalize(sentence, self.config)
+        local record = self.history_controller.find_pending_for_sentence(normalized)
+        if h.is_empty(record) then
+            return false
+        end
+        self.history_controller.update_status(record.id, "matched_note", note_id, "")
+        self.update_history_note_fn(note_id, record, function(success, error)
+            if success then
+                self.history_controller.update_status(record.id, "media_done", note_id, "")
+            else
+                self.history_controller.update_status(record.id, "media_failed", note_id, error or "media backfill failed")
+            end
+        end)
+        return true
+    end
+
     local function process_new_notes(note_ids, error)
         if not h.is_empty(error) and not h.is_substr(error, "isn't running") then
             mp.msg.error("failed to check new notes: " .. error)
@@ -80,8 +105,10 @@ local function make_anki_new_note_checker()
                 local note_fields = self.ankiconnect.get_note_fields(note_id)
                 -- Check if the note has the configured sentence field.
                 if not h.is_empty(note_fields) and note_fields[self.config.sentence_field] ~= nil and is_note_recent(note_id) and has_no_media(note_fields) then
-                    -- Note matches our criteria, update it (just like pressing Ctrl+M does).
-                    table.insert(to_update, note_id)
+                    if not try_update_from_history(note_id, note_fields) then
+                        -- Note matches our criteria, update it (just like pressing Ctrl+M does).
+                        table.insert(to_update, note_id)
+                    end
                 end
                 -- Add to ignore list regardless of whether we updated it or not.
                 -- This prevents the function from processing the same notes over and over.
@@ -122,10 +149,12 @@ local function make_anki_new_note_checker()
         msg.info("new note checker stopped.")
     end
 
-    local function init(ankiconnect, update_notes_fn, cfg_mgr)
+    local function init(ankiconnect, update_notes_fn, update_history_note_fn, history_controller, cfg_mgr)
         cfg_mgr.fail_if_not_ready()
         self.ankiconnect = ankiconnect
         self.update_notes_fn = update_notes_fn
+        self.update_history_note_fn = update_history_note_fn
+        self.history_controller = history_controller
         self.config = cfg_mgr.config()
     end
 

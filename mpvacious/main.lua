@@ -621,7 +621,13 @@ local main = (function()
         subs_observer.init(menu, cfg_mgr)
         history_controller.init(cfg_mgr, subs_observer)
         note_exporter.init(ankiconnect, quick_creation_opts, subs_observer, encoder, forvo, cfg_mgr)
-        new_note_checker.init(ankiconnect, menu:with_update { note_exporter.update_notes }, cfg_mgr)
+        new_note_checker.init(
+                ankiconnect,
+                menu:with_update { note_exporter.update_notes },
+                note_exporter.update_note_from_history_record,
+                history_controller,
+                cfg_mgr
+        )
         pcall_tests()
 
         add_history_global_binding()
