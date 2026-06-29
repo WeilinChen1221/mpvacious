@@ -12,6 +12,19 @@ local msg = require('mp.msg')
 local h = require('helpers')
 local normalizer = require('history.normalizer')
 
+local function classify_claim(claim, error)
+    if not h.is_empty(error) or type(claim) ~= "table" then
+        return "retry"
+    elseif claim.status == "claimed" and not h.is_empty(claim.record) then
+        return "claimed"
+    elseif claim.status == "already_claimed" then
+        return "handled"
+    elseif claim.status == "unmatched" then
+        return "fallback"
+    end
+    return "retry"
+end
+
 local function make_anki_new_note_checker()
     -- Once every X seconds, check if there's a new note.
     -- If a new note has been added, check if it matches the configured note type (see the config file):
@@ -68,17 +81,22 @@ local function make_anki_new_note_checker()
 
     local function try_update_from_history(note_id, note_fields)
         if h.is_empty(self.history_controller) or not self.history_controller.enabled() then
-            return false
+            return "fallback"
         end
         local sentence = note_fields[self.config.sentence_field]
         if h.is_empty(sentence) then
-            return false
+            return "fallback"
         end
         local normalized = normalizer.normalize(sentence, self.config)
-        local record = self.history_controller.find_pending_for_sentence(normalized)
-        if h.is_empty(record) then
-            return false
+        local claim, claim_error = self.history_controller.claim_note(note_id, normalized)
+        local action = classify_claim(claim, claim_error)
+        if action ~= "claimed" then
+            if action == "retry" then
+                mp.msg.warn("Mining history claim failed: " .. tostring(claim_error or "invalid response"))
+            end
+            return action
         end
+        local record = claim.record
         self.history_controller.update_status(record.id, "matched_note", note_id, "")
         self.update_history_note_fn(note_id, record, function(success, error)
             if success then
@@ -87,7 +105,7 @@ local function make_anki_new_note_checker()
                 self.history_controller.update_status(record.id, "media_failed", note_id, error or "media backfill failed")
             end
         end)
-        return true
+        return "handled"
     end
 
     local function process_new_notes(note_ids, error)
@@ -103,16 +121,21 @@ local function make_anki_new_note_checker()
             if not is_note_ignored(note_id) then
                 -- Get note info to check if it matches the user's config
                 local note_fields = self.ankiconnect.get_note_fields(note_id)
+                local should_ignore = true
                 -- Check if the note has the configured sentence field.
                 if not h.is_empty(note_fields) and note_fields[self.config.sentence_field] ~= nil and is_note_recent(note_id) and has_no_media(note_fields) then
-                    if not try_update_from_history(note_id, note_fields) then
+                    local action = try_update_from_history(note_id, note_fields)
+                    if action == "fallback" then
                         -- Note matches our criteria, update it (just like pressing Ctrl+M does).
                         table.insert(to_update, note_id)
+                    elseif action == "retry" then
+                        should_ignore = false
                     end
                 end
-                -- Add to ignore list regardless of whether we updated it or not.
-                -- This prevents the function from processing the same notes over and over.
-                add_to_ignore_list(note_id)
+                -- Claim errors stay eligible for the next polling cycle.
+                if should_ignore then
+                    add_to_ignore_list(note_id)
+                end
             end
         end
         if not h.is_empty(to_update) then
@@ -183,5 +206,6 @@ local function make_anki_new_note_checker()
 end
 
 return {
-    new = make_anki_new_note_checker
+    new = make_anki_new_note_checker,
+    classify_claim = classify_claim,
 }

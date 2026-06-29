@@ -34,18 +34,22 @@ local function new(cfg_mgr)
             end
             return nil
         end
-        return platform.json_curl_request {
+        local request = {
             url = base_url() .. path,
             request_json = request_json,
             suppress_log = true,
-            completion_fn = function(success, result, error_msg)
-                if not success or error_msg then
-                    return completion_fn and completion_fn(nil, tostring(error_msg))
-                end
-                local parsed, parse_error = parse_result(result)
-                return completion_fn and completion_fn(parsed, parse_error)
-            end
         }
+        if not completion_fn then
+            return parse_result(platform.json_curl_request(request))
+        end
+        request.completion_fn = function(success, result, error_msg)
+            if not success or error_msg then
+                return completion_fn(nil, tostring(error_msg))
+            end
+            local parsed, parse_error = parse_result(result)
+            return completion_fn(parsed, parse_error)
+        end
+        return platform.json_curl_request(request)
     end
 
     local function get_sync(path)
@@ -63,6 +67,14 @@ local function new(cfg_mgr)
 
     function self.create_record(record, completion_fn)
         return post('/api/records', record, completion_fn)
+    end
+
+    function self.claim_note(note_id, normalized_sentence)
+        return post('/api/claims', {
+            note_id = note_id,
+            normalized_sentence = normalized_sentence,
+            window_minutes = cfg_mgr.query("mining_history_match_window_minutes"),
+        })
     end
 
     function self.find_pending(normalized_sentence)

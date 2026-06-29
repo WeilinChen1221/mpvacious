@@ -113,6 +113,11 @@ local function new()
         return parsed and parsed.record or nil
     end
 
+    function self.claim_note(note_id, normalized_sentence)
+        self.server_process.ensure_running()
+        return self.client.claim_note(note_id, normalized_sentence)
+    end
+
     function self.update_status(record_id, status, note_id, error)
         if not self.enabled() then
             return
